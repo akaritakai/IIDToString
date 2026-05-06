@@ -1,5 +1,5 @@
 // IIDToString.cpp :
-//   Testing two ways to convert an IID to a string, as described in Dave Cutler's YouTube video here:
+//   Testing two ways to convert an IID to a string, as described in Dave Plummer's YouTube video here:
 //   https://www.youtube.com/watch?v=VYTF4KIF2z0
 //
 
