@@ -46,14 +46,11 @@ void IIDToString_Fast(const IID* iid, char* out)
     out[j] = '\0';
 }
 
-// Function taking a pointer to a suitable IIDToString function and testing it with a large number of iterations to measure performance.
+// Function taking a pointer to a suitable IIDToString function and testing it with a large number
+// of iterations to measure performance. Returns the time taken in milliseconds.
 ULONGLONG testIt(void (*func)(const IID* iid, char* out), const IID* iid, int iterations, char* buffer) {
     auto start = GetTickCount64();
-    
-    for (int i = 0; i < iterations; i++) {
-        func(iid, buffer);
-    }
-    
+    for (int i = 0; i < iterations; i++) func(iid, buffer);
     return GetTickCount64() - start;
 }
 
@@ -61,7 +58,8 @@ int main()
 {
   IID testIID;
   HRESULT res;
-  
+
+  // Random test IID pulled from my registry.
   res = IIDFromString(L"{cecec95a-d894-491a-bee3-5e106fb59f2d}", &testIID);
 
   if (FAILED(res)) {
