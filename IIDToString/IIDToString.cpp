@@ -3,22 +3,27 @@
 //   https://www.youtube.com/watch?v=VYTF4KIF2z0
 //
 
+#include <array>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
+
 #include <combaseapi.h>
+#include <immintrin.h>
 
 auto constexpr BUFFER_LEN = 64;
 auto constexpr TEST_ITERATIONS = 10000000;
 
-char hexLookup[65536][4];
+char fast3HexLookup[65536][4];
 
-void createHexLookup() {
+void createFast3HexLookup() {
   static const char hex[17] = "0123456789abcdef";
 
   for (int i = 0; i < 65536; i++) {
-    hexLookup[i][0] = hex[i >> 12];
-    hexLookup[i][1] = hex[(i >> 8) & 0xF];
-    hexLookup[i][2] = hex[(i >> 4) & 0xF];
-    hexLookup[i][3] = hex[i & 0xF];
+    fast3HexLookup[i][0] = hex[i >> 12];
+    fast3HexLookup[i][1] = hex[(i >> 8) & 0xF];
+    fast3HexLookup[i][2] = hex[(i >> 4) & 0xF];
+    fast3HexLookup[i][3] = hex[i & 0xF];
   }
 }
 
@@ -127,7 +132,7 @@ void IIDToString_Fast3(const IID* iid, char* out)
   for (i = 0; i < 8; i++)
   {
     const uint16_t b = p[order[i]];
-    const char* hexStr = hexLookup[b];
+    const char* hexStr = fast3HexLookup[b];
 
     if (pairOrder == 0) {
       out[j++] = hexStr[0];
@@ -153,6 +158,114 @@ void IIDToString_Fast3(const IID* iid, char* out)
   out[j] = '\0';
 }
 
+// 512-byte lookup table for hex values.
+constexpr std::array<uint16_t, 256> createFast4HexLookup() {
+  std::array<uint16_t, 256> table = {};
+  const char hex[] = "0123456789abcdef";
+  for (int i = 0; i < 256; i++) {
+    table[i] = (uint16_t)(hex[i >> 4] | (hex[i & 0xF] << 8));
+  }
+  return table;
+}
+constexpr auto fast4HexLookup = createFast4HexLookup();
+
+// Faster function to convert an IID to a string representation using an
+// unrolled loop. This version uses a 256-entry lookup table of 16-bit integers
+// to write two characters at a time, completely eliminating branches, loops,
+// and bit-shifting. On vintage hardware, like the Pentium PCs available during
+// Windows XP development, this is dramatically faster (avoids L1 cache misses
+// and branch prediction penalties).
+void IIDToString_Fast4(const IID* iid, char* out) {
+  // Treat the IID as a simple byte array to ensure the compiler generates
+  // 'movzx' instructions (prevents partial register stalls).
+  const unsigned char* p = (const unsigned char*) iid;
+
+  // --- Block 1: Data1 (4 bytes, Little Endian memory order) ---
+  std::memcpy(out + 0, &fast4HexLookup[p[3]], 2);
+  std::memcpy(out + 2, &fast4HexLookup[p[2]], 2);
+  std::memcpy(out + 4, &fast4HexLookup[p[1]], 2);
+  std::memcpy(out + 6, &fast4HexLookup[p[0]], 2);
+  out[8] = '-';
+
+  // --- Block 2: Data2 (2 bytes, Little Endian memory order) ---
+  std::memcpy(out + 9, &fast4HexLookup[p[5]], 2);
+  std::memcpy(out + 11, &fast4HexLookup[p[4]], 2);
+  out[13] = '-';
+
+  // --- Block 3: Data3 (2 bytes, Little Endian memory order) ---
+  std::memcpy(out + 14, &fast4HexLookup[p[7]], 2);
+  std::memcpy(out + 16, &fast4HexLookup[p[6]], 2);
+  out[18] = '-';
+
+  // --- Block 4: Data4 (8 bytes, Big Endian / Sequential array) ---
+  std::memcpy(out + 19, &fast4HexLookup[p[8]], 2);
+  std::memcpy(out + 21, &fast4HexLookup[p[9]], 2);
+  out[23] = '-';
+  std::memcpy(out + 24, &fast4HexLookup[p[10]], 2);
+  std::memcpy(out + 26, &fast4HexLookup[p[11]], 2);
+  std::memcpy(out + 28, &fast4HexLookup[p[12]], 2);
+  std::memcpy(out + 30, &fast4HexLookup[p[13]], 2);
+  std::memcpy(out + 32, &fast4HexLookup[p[14]], 2);
+  std::memcpy(out + 34, &fast4HexLookup[p[15]], 2);
+
+  out[36] = '\0';
+}
+
+// Faster function to convert an IID to a string representation using SIMD
+// intrinsics. This version uses SSE features available to processors for the
+// last 17 years, processing the bytes in parallel and performing in-register
+// lookups.
+void IIDToString_Fast5(const IID* iid, char* out) {
+  static const __m128i mask_0f = _mm_set1_epi8(0x0F);
+  static const __m128i ascii_lut = _mm_setr_epi8(
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    'a', 'b', 'c', 'd', 'e', 'f'
+  );
+  static const __m128i idx1 = _mm_setr_epi8(
+    6, 7, 4, 5, 2, 3, 0, 1, char(-1), 10, 11, 8, 9, char(-1), 14, 15
+  );
+  static const __m128i format1 = _mm_setr_epi8(
+    0, 0, 0, 0, 0, 0, 0, 0, '-', 0, 0, 0, 0, '-', 0, 0
+  );
+  static const __m128i idx2 = _mm_setr_epi8(
+    0, 1, char(-1), 4, 5, 6, 7, char(-1), 8, 9, 10, 11, 12, 13, 14, 15
+  );
+  static const __m128i format2 = _mm_setr_epi8(
+    0, 0, '-', 0, 0, 0, 0, '-', 0, 0, 0, 0, 0, 0, 0, 0
+  );
+
+  // Load the UUID.
+  __m128i uuid = _mm_loadu_si128((const __m128i*)iid);
+
+  // Split into high and low nibbles (4-bit chunks).
+  __m128i lo = _mm_and_si128(uuid, mask_0f);
+  __m128i hi = _mm_and_si128(_mm_srli_epi16(uuid, 4), mask_0f);
+
+  // Interleave the high and low nibbles side-by-side.
+  // hex1 gets the first 8 bytes of the UUID
+  // hex2 gets the last 8 bytes of the UUID
+  __m128i hex1 = _mm_unpacklo_epi8(hi, lo);
+  __m128i hex2 = _mm_unpackhi_epi8(hi, lo);
+
+  // Perform the ASCII lookup.
+  __m128i chars1 = _mm_shuffle_epi8(ascii_lut, hex1);
+  __m128i chars2 = _mm_shuffle_epi8(ascii_lut, hex2);
+
+  // Write block 1 (bytes 0-15).
+  __m128i block1 = _mm_or_si128(_mm_shuffle_epi8(chars1, idx1), format1);
+  _mm_storeu_si128((__m128i*)out, block1);
+
+  // Write block 2 (bytes 16-31).
+  __m128i chars_mid = _mm_alignr_epi8(chars2, chars1, 12);
+  __m128i block2 = _mm_or_si128(_mm_shuffle_epi8(chars_mid, idx2), format2);
+  _mm_storeu_si128((__m128i*)(out + 16), block2);
+
+  // Write block 3 (bytes 32-36).
+  uint32_t tail = _mm_extract_epi32(chars2, 3);
+  std::memcpy(out + 32, &tail, 4);
+  out[36] = '\0';
+}
+
 // Function taking a pointer to a suitable IIDToString function and testing it with a large number
 // of iterations to measure performance. Returns the time taken in milliseconds.
 ULONGLONG testIt(void (*func)(const IID* iid, char* out), const IID* iid, int iterations, char* buffer) {
@@ -167,8 +280,8 @@ int main()
   IID testIID;
   HRESULT res;
 
-  // Initialise the hex lookup table for the Fast3 version.
-  createHexLookup();
+  // Initialise the hex lookup tables.
+  createFast3HexLookup();
 
   // Random test IID pulled from my registry.
   res = IIDFromString(L"{cecec95a-d894-491a-bee3-5e106fb59f2d}", &testIID);
@@ -196,5 +309,13 @@ int main()
 
   dur = testIt(IIDToString_Fast3, &testIID, TEST_ITERATIONS, buffer);
   std::cout << "Fast3 version: " << dur << "ms\n";
+  std::cout << "Converted value: " << buffer << "\n\n";
+
+  dur = testIt(IIDToString_Fast4, &testIID, TEST_ITERATIONS, buffer);
+  std::cout << "Fast4 version: " << dur << "ms\n";
+  std::cout << "Converted value: " << buffer << "\n\n";
+
+  dur = testIt(IIDToString_Fast5, &testIID, TEST_ITERATIONS, buffer);
+  std::cout << "Fast5 version: " << dur << "ms\n";
   std::cout << "Converted value: " << buffer << "\n\n";
 }
